@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+
+
+
+
+/* *{
+  @apply debug;
+} */
+
+.debug{
+  @apply border border-red-500 ; 
+}
