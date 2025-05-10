@@ -10,7 +10,13 @@ const Home = () => {
   ];
 
   const [motions, setMotions] = useState(initialMotions);
-  const [sprites, setSprites] = useState([
+
+  const [looks, setLooks] = useState([
+    { label: "Say", value: "", duration: "", type: "say" },
+    { label: "Think", value: "", duration: "", type: "think" },
+  ]);
+
+  const [spirits, setspirits] = useState([
     {
       id: 0,
       rotation: 0,
@@ -18,25 +24,27 @@ const Home = () => {
       x: 0,
       y: 0,
       motions: [],
+      visibleText: "", // for say/think display
     },
   ]);
-  const [activeSpriteId, setActiveSpriteId] = useState(0);
+  const [activespiritId, setActivespiritId] = useState(0);
 
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
       const reader = new FileReader();
       reader.onloadend = () => {
-        const newSprite = {
+        const newspirit = {
           id: Date.now(),
           src: reader.result,
           x: 0,
           y: 0,
           rotation: 0,
           motions: [],
+          visibleText: "",
         };
-        setSprites((prev) => [...prev, newSprite]);
-        setActiveSpriteId(newSprite.id);
+        setspirits((prev) => [...prev, newspirit]);
+        setActivespiritId(newspirit.id);
       };
       reader.readAsDataURL(file);
     }
@@ -51,11 +59,11 @@ const Home = () => {
   const handleDrop = (e) => {
     e.preventDefault();
     const droppedData = JSON.parse(e.dataTransfer.getData("motion"));
-    setSprites((prev) =>
-      prev.map((sprite) =>
-        sprite.id === activeSpriteId
-          ? { ...sprite, motions: [...sprite.motions, droppedData] }
-          : sprite
+    setspirits((prev) =>
+      prev.map((spirit) =>
+        spirit.id === activespiritId
+          ? { ...spirit, motions: [...spirit.motions, droppedData] }
+          : spirit
       )
     );
   };
@@ -63,92 +71,132 @@ const Home = () => {
   const allowDrop = (e) => e.preventDefault();
 
   const handlePlay = async () => {
-    const playPromises = sprites.map((sprite, index) => {
-      const spriteMotions = sprite.motions;
+    let collisionMap = new Set();
 
-      return new Promise((resolve) => {
-        const execute = async (cmds, isRepeat = false) => {
-          let currentX = sprite.x;
-          let currentY = sprite.y;
-          let currentRotation = sprite.rotation;
+    const detectCollision = (a, b) => {
+      const ax = a.x,
+        ay = a.y;
+      const bx = b.x,
+        by = b.y;
+      const distance = Math.sqrt((ax - bx) ** 2 + (ay - by) ** 2);
+      return distance < 60; // assuming sprite size ~50, add buffer
+    };
 
-          let i = 0;
-          while (i < cmds.length) {
-            const cmd = cmds[i];
+    const swapMotions = (id1, id2) => {
+      setspirits((prev) => {
+        const copy = [...prev];
+        const idx1 = copy.findIndex((s) => s.id === id1);
+        const idx2 = copy.findIndex((s) => s.id === id2);
 
-            if (cmd.label === "Repeat") {
-              // Repeat all previous motions indefinitely
-              const repeatCommands = cmds.slice(0, i);
-              while (true) {
-                for (let r = 0; r < repeatCommands.length; r++) {
-                  await new Promise((res) => setTimeout(res, 300));
-                  const c = repeatCommands[r];
+        if (idx1 !== -1 && idx2 !== -1) {
+          const temp = copy[idx1].motions;
+          copy[idx1].motions = copy[idx2].motions;
+          copy[idx2].motions = temp;
+        }
 
-                  if (c.label === "Move") {
-                    const distance = parseFloat(c.value);
-                    const rad = (currentRotation * Math.PI) / 180;
-                    currentX += distance * Math.cos(rad);
-                    currentY += distance * Math.sin(rad);
-                  } else if (c.label === "Turn") {
-                    currentRotation += parseFloat(c.value);
-                  } else if (c.label === "Go To") {
-                    currentX = parseFloat(c.value.x);
-                    currentY = parseFloat(c.value.y);
-                  }
+        return copy;
+      });
+    };
 
-                  // Update sprite in-place
-                  setSprites((prevSprites) => {
-                    const updated = [...prevSprites];
-                    updated[index] = {
-                      ...updated[index],
-                      x: currentX,
-                      y: currentY,
-                      rotation: currentRotation,
-                    };
-                    return updated;
-                  });
-                }
-              }
-            } else {
-              await new Promise((res) => setTimeout(res, 300));
-              if (cmd.label === "Move") {
-                const distance = parseFloat(cmd.value);
-                const rad = (currentRotation * Math.PI) / 180;
-                currentX += distance * Math.cos(rad);
-                currentY += distance * Math.sin(rad);
-              } else if (cmd.label === "Turn") {
-                currentRotation += parseFloat(cmd.value);
-              } else if (cmd.label === "Go To") {
-                currentX = parseFloat(cmd.value.x);
-                currentY = parseFloat(cmd.value.y);
-              }
+    const playCharacter = (spirit, index) => {
+      return new Promise(async (resolve) => {
+        let currentX = spirit.x;
+        let currentY = spirit.y;
+        let currentRotation = spirit.rotation;
+        const motions = [...spirit.motions];
 
-              setSprites((prevSprites) => {
-                const updated = [...prevSprites];
-                updated[index] = {
-                  ...updated[index],
-                  x: currentX,
-                  y: currentY,
-                  rotation: currentRotation,
-                };
-                return updated;
-              });
-            }
-
-            i++;
+        const executeMotion = async (cmd) => {
+          if (cmd.label === "Move") {
+            const distance = parseFloat(cmd.value);
+            const rad = (currentRotation * Math.PI) / 180;
+            currentX += distance * Math.cos(rad);
+            currentY += distance * Math.sin(rad);
+          } else if (cmd.label === "Turn") {
+            currentRotation += parseFloat(cmd.value);
+          } else if (cmd.label === "Go To") {
+            currentX = parseFloat(cmd.value.x);
+            currentY = parseFloat(cmd.value.y);
+          } else if (cmd.label === "Say" || cmd.label === "Think") {
+            const message = cmd.value;
+            const duration = parseFloat(cmd.duration) * 1000;
+            setspirits((prev) => {
+              const updated = [...prev];
+              updated[index] = {
+                ...updated[index],
+                visibleText: message,
+              };
+              return updated;
+            });
+            await new Promise((res) => setTimeout(res, duration));
+            setspirits((prev) => {
+              const updated = [...prev];
+              updated[index] = {
+                ...updated[index],
+                visibleText: "",
+              };
+              return updated;
+            });
+            return;
           }
 
-          resolve(); // completes if no infinite repeat
+          setspirits((prev) => {
+            const updated = [...prev];
+            updated[index] = {
+              ...updated[index],
+              x: currentX,
+              y: currentY,
+              rotation: currentRotation,
+            };
+            return updated;
+          });
+
+          await new Promise((res) => setTimeout(res, 200));
         };
 
-        execute(spriteMotions);
-      });
-    });
+        const runLoop = async () => {
+          while (true) {
+            for (const cmd of motions) {
+              await executeMotion(cmd);
+            }
 
-    await Promise.all(playPromises);
+            // Collision check (after 1 cycle of motions)
+            setspirits((currentSpirits) => {
+              const newSpirits = [...currentSpirits];
+              const currentSpirit = newSpirits[index];
+
+              newSpirits.forEach((otherSpirit, i) => {
+                if (
+                  i !== index &&
+                  detectCollision(currentSpirit, otherSpirit)
+                ) {
+                  const key = [currentSpirit.id, otherSpirit.id]
+                    .sort()
+                    .join("-");
+                  if (!collisionMap.has(key)) {
+                    collisionMap.add(key);
+                    swapMotions(currentSpirit.id, otherSpirit.id);
+                  }
+                }
+              });
+
+              return newSpirits;
+            });
+
+            await new Promise((res) => setTimeout(res, 200));
+          }
+        };
+
+        runLoop();
+      });
+    };
+
+    const promises = spirits.map((spirit, index) =>
+      playCharacter(spirit, index)
+    );
+    await Promise.all(promises);
   };
 
-  const activeSprite = sprites.find((s) => s.id === activeSpriteId);
+  const activespirit = spirits.find((s) => s.id === activespiritId);
 
   return (
     <div className="flex bg-slate-200 p-4 gap-4 w-full h-screen">
@@ -207,19 +255,59 @@ const Home = () => {
             </div>
           ))}
         </div>
+
+        <p className="border-b border-t p-4">Looks</p>
+        <div className="p-4">
+          {looks.map((look, idx) => (
+            <div
+              key={`look-${idx}`}
+              draggable
+              onDragStart={(e) =>
+                e.dataTransfer.setData("motion", JSON.stringify(look))
+              }
+              className="flex items-center bg-purple-200 p-2 my-2 rounded-md cursor-move space-x-2"
+            >
+              <span>{look.label}</span>
+              <input
+                type="text"
+                placeholder="Message"
+                value={look.value}
+                onChange={(e) => {
+                  const updated = [...looks];
+                  updated[idx].value = e.target.value;
+                  setLooks(updated);
+                }}
+                className="w-24 px-1 text-center bg-white border border-gray-300 rounded"
+              />
+              <span>for</span>
+              <input
+                type="text"
+                placeholder="Seconds"
+                value={look.duration}
+                onChange={(e) => {
+                  const updated = [...looks];
+                  updated[idx].duration = e.target.value;
+                  setLooks(updated);
+                }}
+                className="w-12 px-1 text-center bg-white border border-gray-300 rounded"
+              />
+              <span>sec</span>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Workspace */}
       <div className="grid bg-white w-full grid-cols-2 gap-4">
-        {/* Mid Area for active sprite motions */}
+        {/* Mid Area for active spirit motions */}
         <div
           className="w-full bg-yellow-100 h-full rounded border"
           onDrop={handleDrop}
           onDragOver={allowDrop}
         >
-          <p className="border-b p-4">Mid Area (Active Sprite Motions)</p>
+          <p className="border-b p-4">Mid Area (Active spirit Motions)</p>
           <div className="p-4 h-full overflow-auto">
-            {activeSprite?.motions.map((item, idx) => (
+            {activespirit?.motions.map((item, idx) => (
               <div
                 key={idx}
                 className="flex items-center bg-yellow-300 p-2 my-2 rounded space-x-2"
@@ -242,7 +330,25 @@ const Home = () => {
                       className="w-12 px-1 text-center bg-white border border-gray-300 rounded"
                     />
                   </>
-                ) : item.label === "Repeat" ? null : (
+                ) : item.label === "Repeat" ? null : item.label === "Say" ||
+                  item.label === "Think" ? (
+                  <>
+                    <input
+                      type="text"
+                      value={item.value}
+                      readOnly
+                      className="w-24 px-1 text-center bg-white border border-gray-300 rounded"
+                    />
+                    <span>for</span>
+                    <input
+                      type="text"
+                      value={item.duration}
+                      readOnly
+                      className="w-12 px-1 text-center bg-white border border-gray-300 rounded"
+                    />
+                    <span>sec</span>
+                  </>
+                ) : (
                   <>
                     <input
                       type="text"
@@ -255,16 +361,16 @@ const Home = () => {
                 )}
                 <button
                   onClick={() => {
-                    setSprites((prevSprites) =>
-                      prevSprites.map((sprite) =>
-                        sprite.id === activeSprite.id
+                    setspirits((prevspirits) =>
+                      prevspirits.map((spirit) =>
+                        spirit.id === activespirit.id
                           ? {
-                              ...sprite,
-                              motions: sprite.motions.filter(
+                              ...spirit,
+                              motions: spirit.motions.filter(
                                 (_, i) => i !== idx
                               ),
                             }
-                          : sprite
+                          : spirit
                       )
                     );
                   }}
@@ -280,20 +386,30 @@ const Home = () => {
         {/* Playground */}
         <div className="border flex overflow-hidden flex-col">
           <p className="border-b p-4">Playground</p>
-          <div className="p-4 flex h-full relative overflow-hidden">
-            {sprites.map((sprite) => (
-              <img
-                src={sprite.src}
-                key={sprite.id}
-                alt="animated"
-                className={`transition-transform duration-500 h-20 w-20 ease-in-out  cursor-pointer ${
-                  sprite.id === activeSpriteId ? "ring-4 ring-blue-400" : ""
-                }`}
+          <div className="p-4 debug gap-4  flex h-full relative overflow-hidden">
+            {spirits.map((spirit) => (
+              <div
+                key={spirit.id}
+                className=""
                 style={{
-                  transform: `translate(${sprite.x}px, ${sprite.y}px) rotate(${sprite.rotation}deg)`,
+                  transform: `translate(${spirit.x}px, ${spirit.y}px) rotate(${spirit.rotation}deg)`,
+                  transition: "transform 0.5s ease-in-out",
                 }}
-                onClick={() => setActiveSpriteId(sprite.id)}
-              />
+                onClick={() => setActivespiritId(spirit.id)}
+              >
+                <img
+                  src={spirit.src}
+                  alt="animated"
+                  className={`h-20 w-20 cursor-pointer ${
+                    spirit.id === activespiritId ? "ring-4 ring-blue-400" : ""
+                  }`}
+                />
+                {spirit.visibleText && (
+                  <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 bg-white text-black border px-2 py-1 rounded shadow-md text-xs">
+                    {spirit.visibleText}
+                  </div>
+                )}
+              </div>
             ))}
           </div>
 
@@ -310,20 +426,20 @@ const Home = () => {
             </label>
 
             <div className="flex justify-center items-center gap-2">
-              {sprites.map((sprite, index) => (
+              {spirits.map((spirit, index) => (
                 <div
-                  key={sprite.id}
-                  onClick={() => setActiveSpriteId(sprite.id)}
+                  key={spirit.id}
+                  onClick={() => setActivespiritId(spirit.id)}
                   className={`border p-2 cursor-pointer ${
-                    sprite.id === activeSpriteId ? "bg-blue-200" : ""
+                    spirit.id === activespiritId ? "bg-blue-200" : ""
                   }`}
                 >
                   <img
-                    src={sprite.src}
-                    alt="sprite"
+                    src={spirit.src}
+                    alt="spirit"
                     className="w-10 m-auto h-10"
                   />
-                  <p>Sprite {index + 1}</p>
+                  <p>spirit {index + 1}</p>
                 </div>
               ))}
             </div>
